@@ -1,4 +1,5 @@
 //helpers
+
 function set_cookie(name, value, expirationDays) {
 	const date = new Date();
 	date.setTime(date.getTime() + (expirationDays * 24 * 60 * 60 * 1000));
@@ -30,9 +31,9 @@ function set_cookie(name, value, expirationDays) {
   function bucket_sort() {
   
 	  var bucket = parseInt(get_cookie("mm_exp_bucket"));
-  
-	  if (!bucket) {
-  
+
+	  if (isNaN(bucket)) {
+
 		  bucket = Math.round(random_number());
 		  set_cookie("mm_exp_bucket", bucket, 365);
   
@@ -48,7 +49,6 @@ function new_experiment(id, name, experimentCallback) {
     if (name === undefined) name = null;
 
     var cookie_name = "mm_exp_id_" + id;
-
     var exp = get_cookie(cookie_name);
     var exp_id = '';
     var variant = '';
@@ -67,30 +67,42 @@ function new_experiment(id, name, experimentCallback) {
         set_cookie(cookie_name, id + "." + variant, 365);
     }
 
+    // Função que executa a variante — só roda APÓS a impressão ser enviada.
+    // Idempotente: roda uma única vez, seja pelo callback do GA/GTM ou pelo timeout de fallback.
+    var _variantRan = false;
+    function runVariant() {
+        if (_variantRan) return;
+        _variantRan = true;
+        if (variant == '0') {
+            if (typeof experiment_original !== 'undefined') {
+                experiment_original();
+            }
+        }
+        if (variant == '1') {
+            experimentCallback(id);
+        }
+    }
+
     if (typeof gtag == 'function') {
         gtag("event", "experiment_impression", {
             experiment_id: id,
             experiment_variant: variant,
-            experiment_name: name
+            experiment_name: name,
+            event_callback: runVariant,          // GA chama após confirmar o envio da impressão
+            event_timeout: 500                   // fallback do gtag: executa após 500ms
         });
+        // Garantia extra: se o callback do gtag não vier, roda mesmo assim (idempotente).
+        setTimeout(runVariant, 700);
     } else {
         dataLayer.push({
             event: "experiment_impression",
             experiment_id: id,
             experiment_variant: variant,
-            experiment_name: name
+            experiment_name: name,
+            eventCallback: runVariant,           // GTM chama após disparar as tags do push
+            eventTimeout: 500
         });
-    }
-
-    if (variant == '0') {
-        if (typeof experiment_original !== 'undefined') {
-            console.log('test0');
-            experiment_original();
-        }
-    }
-
-    if (variant == '1') {
-        console.log('test1');
-        experimentCallback(id);
+ 
+        setTimeout(runVariant, 700);
     }
 }
